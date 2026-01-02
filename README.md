@@ -1,34 +1,33 @@
 # SafeNet VPN
 
-**Private browsing VPN service for SecureNet customers.**
+**Private browsing VPN for SecureNet customers.**
 
 [![Ubuntu Version](https://img.shields.io/badge/Ubuntu-24.04%20LTS-E95420)](https://ubuntu.com/)
 [![WireGuard](https://img.shields.io/badge/Protocol-WireGuard-88171a)](https://www.wireguard.com/)
 [![License](https://img.shields.io/badge/License-BSD%202--Clause-orange)](LICENSE)
-[![Download Config](https://img.shields.io/github/v/release/opensourcesecurity-inc/safenet?label=Download&color=ff6b35)](https://github.com/opensourcesecurity-inc/safenet/releases/latest)
 
 ---
 
 ## What Is SafeNet?
 
-SafeNet is a network-level VPN service for [SecureNet](https://github.com/opensourcesecurity-inc/securenet) customers. All devices on SafeNet networks route through our Chicago server automatically—no apps to install on each device.
+SafeNet is a network-level VPN service for Protectli vaults running [SecureNet](https://github.com/opensourcesecurity-inc/securenet). All devices on SafeNet-enabled networks route through our hardened Chicago server automatically—no apps to install on each device.
 
-This repository contains the complete server configuration (sanitized).
+This repository contains the complete server configuration. Keys and passwords are excluded—everything else is here.
 
-**Verify our privacy claims. Inspect our logging configuration.**
+**Verify our privacy claims. Inspect our code. That's the point.**
 
 ---
 
 ## What SafeNet Is For
 
-| ✅ Designed For | ❌ Not For |
-|-----------------|-----------|
-| Private browsing at home | Streaming services (blocked) |
-| ISP privacy protection | Torrenting / P2P (prohibited) |
-| Keeping your IP private from websites | Gaming (UDP blocked) |
-| Whole-network VPN | Travel / coffee shop security |
+| Designed For | Not For |
+|--------------|---------|
+| Private browsing | Streaming services (blocked) |
+| ISP privacy protection | Torrenting / P2P (blocked) |
+| Keeping your IP private | Gaming (UDP restricted) |
+| Whole-network VPN | High-bandwidth applications |
 
-**SafeNet is browse-only by design.**
+**SafeNet is a browsing-focused VPN by design.** We deliberately restrict bandwidth-heavy traffic to maintain performance and protect our IP reputation.
 
 ---
 
@@ -36,41 +35,145 @@ This repository contains the complete server configuration (sanitized).
 
 | Component | Specification |
 |-----------|---------------|
-| Location | Chicago, USA |
-| OS | Ubuntu Server 24.04 LTS |
+| Location | Chicago, USA (expansion planned) |
+| Hardware | Dedicated server, Intel Xeon E3-1230 v6, 32GB RAM |
 | Network | 10 Gbps dedicated fiber (unmetered) |
-| Protocol | WireGuard |
-| Encryption | ChaCha20-Poly1305 |
-| DNS | Unbound (zero query logging) |
+| OS | Ubuntu Server 24.04 LTS |
+| Protocol | WireGuard (ChaCha20-Poly1305) |
+| DNS | Unbound with zero query logging |
+
+---
+
+## Security Architecture
+
+SafeNet runs a **privilege-separated architecture** with defense in depth. No single compromise gives an attacker full access.
+
+### Privilege Separation Model
+
+```
+┌────────────────────────────────────────────────────┐
+│                     nginx                          │
+│              (reverse proxy, rate limiting)        │
+└─────────────────────────┬──────────────────────────┘
+                          │
+                          ▼
+┌────────────────────────────────────────────────────┐
+│          Flask Admin API (User: safenet)           │
+│                                                    │
+│  • Unprivileged user                               │
+│  • Cannot access WireGuard configs                 │
+│  • Cannot execute system commands                  │
+│  • Sandboxed by systemd                            │
+└─────────────────────────┬──────────────────────────┘
+                          │ Unix socket (restricted)
+                          ▼
+┌────────────────────────────────────────────────────┐
+│        WireGuard Control Daemon (User: wgctl)      │
+│                                                    │
+│  • Dedicated unprivileged user                     │
+│  • CAP_NET_ADMIN capability only (not root)        │
+│  • Strict input validation                         │
+│  • Only accepts commands via local socket          │
+└────────────────────────────────────────────────────┘
+```
+
+**If the web application is compromised:** Attacker gets an unprivileged user with no access to VPN configs, keys, or system commands.
+
+**If the daemon is compromised:** Attacker only has CAP_NET_ADMIN capability—cannot read files, cannot escalate to root.
+
+### Six-Layer Security Stack
+
+| Layer | Protection |
+|-------|------------|
+| 1. iptables | Protocol blocking (torrents, unauthorized UDP) |
+| 2. WireGuard | Encrypted tunnel with modern cryptography |
+| 3. nginx | Rate limiting, IP-based access control |
+| 4. Unbound DNS | 850,000+ malicious domains blocked |
+| 5. ipset | 46,000+ malicious IPs blocked at kernel level |
+| 6. Privilege Separation | Flask and daemon run as unprivileged users |
+
+### Server Hardening
+
+| Measure | Implementation |
+|---------|----------------|
+| SSH | Key-only authentication, password disabled |
+| Brute Force | fail2ban (3 failures = 1 hour ban) |
+| Updates | Unattended security upgrades enabled |
+| Firewall | iptables with ipset integration |
+| IPv6 | Disabled system-wide |
+| Systemd | Services hardened with ProtectSystem, PrivateTmp, NoNewPrivileges |
+| File Permissions | WireGuard private key readable only by root |
+
+### Open Ports (Public Interface)
+
+| Port | Service | Protection |
+|------|---------|------------|
+| 22/tcp | SSH | Key-only, fail2ban |
+| 80/tcp | Blocklist distribution | Static files only |
+| 51820/udp | WireGuard | Encrypted tunnel |
+
+Port 53 (DNS) is bound to the tunnel interface only—not accessible from the public internet.
 
 ---
 
 ## Privacy Architecture
 
-### What the Server Knows vs. Doesn't Know
+### What We Know vs. Don't Know
 
-| Server KNOWS | Server DOES NOT Know |
-|--------------|----------------------|
-| Tunnel IP (10.200.0.x) | DNS queries |
-| Public key | Websites visited |
-| Connection status | Browsing history |
-| Total bandwidth (aggregate) | Connection timestamps |
-| Last handshake time | Customer's real IP |
+| We Know | We Don't Know |
+|---------|---------------|
+| Your tunnel IP (10.200.0.x) | Your DNS queries (not logged) |
+| Your WireGuard public key | Websites you visit |
+| Connection status | Your browsing history |
+| Aggregate bandwidth | Individual connection timestamps |
+| Last handshake time | Contents of your traffic |
 
-### Zero-Logging Verification
-
-You can verify our logging configuration in this repository:
+### Zero-Logging Implementation
 
 ```bash
-# Unbound DNS - no query logging
-cat unbound/safenet.conf | grep -i log
+# Unbound DNS - query logging disabled
+cat unbound/safenet.conf | grep -E "(log-queries|verbosity)"
+# verbosity: 0
+# No log-queries directive = logging disabled
 
-# WireGuard - only startup/shutdown logged
-journalctl -u wg-quick@wg0 --since today
-
-# System journal size (should be small, not gigabytes)
-journalctl --disk-usage
+# Journal limited to errors only
+cat systemd/journald.conf
+# MaxRetentionSec=7day
+# SystemMaxUse=500M
 ```
+
+---
+
+## Browse-Only Enforcement
+
+SafeNet restricts traffic to browsing use cases:
+
+| Allowed | Blocked |
+|---------|---------|
+| HTTP/HTTPS (web browsing) | BitTorrent (ports + protocol detection) |
+| Email (IMAP, SMTP, POP3) | Streaming CDNs (DNS-level blocking) |
+| SSH, SFTP | FTP (ports 20-21) |
+| Standard TCP applications | Most UDP (except DNS) |
+
+### Enforcement Methods
+
+1. **iptables** - UDP blocked except DNS (port 53) and WireGuard (port 51820)
+2. **Port blocking** - BitTorrent ports 6881-6999, DHT port 6771
+3. **DNS filtering** - Streaming services (Netflix, Hulu, Disney+, HBO, YouTube) return NXDOMAIN
+4. **IP blocklists** - Known malicious IPs dropped at kernel level
+
+---
+
+## Status Dashboard
+
+Server metrics available to connected SafeNet users:
+
+**http://status.oss-vpn.net** (tunnel access only)
+
+- Real-time CPU, RAM, disk, network utilization
+- Service status indicators
+- 5-second auto-refresh
+- Powered by Netdata
 
 ---
 
@@ -81,73 +184,27 @@ safenet/
 ├── README.md
 ├── LICENSE
 ├── ubuntu/
-│   ├── hardening.md            # OS hardening steps
-│   ├── packages.md             # Installed packages
-│   └── ufw-rules.md            # Firewall configuration
+│   ├── hardening.md            # OS hardening configuration
+│   ├── packages.txt            # Installed packages
+│   └── sysctl.conf             # Kernel security parameters
 ├── wireguard/
-│   ├── wg0.conf.example        # WireGuard server config (sanitized)
-│   └── peer-management.md      # How peers are added/removed
+│   ├── wg0.conf.example        # Server config (keys removed)
+│   └── peer-management.md      # Peer add/remove procedures
 ├── unbound/
-│   ├── unbound.conf            # DNS resolver configuration
-│   └── safenet.conf            # SafeNet-specific settings
-└── monitoring/
-    └── netdata.md              # Server monitoring setup
+│   ├── safenet.conf            # DNS resolver settings
+│   └── blocklist.conf          # Domain blocking configuration
+├── nginx/
+│   └── status.oss-vpn.net      # Web server configuration
+├── systemd/
+│   ├── wg-control.service      # Privilege-separated daemon
+│   └── safenet-admin.service   # Flask API service
+├── iptables/
+│   ├── rules.v4                # Firewall rules (raw iptables)
+│   └── ipsets                  # IP blocklist persistence
+└── scripts/
+    ├── wg-control.py           # WireGuard control daemon
+    └── update-blocklists.sh    # Daily blocklist updates
 ```
-
-> ⚠️ **Coming Soon:** Configuration files will be published prior to launch (January 27, 2026). README structure shown above reflects planned organization.
-
----
-
-## Security Hardening
-
-| Layer | Configuration |
-|-------|---------------|
-| SSH | Key-only authentication, no root password login |
-| Firewall | UFW with minimal open ports (22, 80, 51820, 53) |
-| Brute Force | Fail2ban (3 failures = 1 hour ban) |
-| Updates | Unattended security upgrades enabled |
-| IPv6 | Disabled |
-
-### Open Ports
-
-| Port | Service | Notes |
-|------|---------|-------|
-| 22 | SSH | Key-only, fail2ban protected |
-| 80 | HTTP | Status dashboard, blocklist distribution |
-| 51820 | WireGuard | VPN tunnel |
-| 53 | DNS | Tunnel interface ONLY |
-
----
-
-## Browse-Only Enforcement
-
-SafeNet restricts traffic to browsing-focused use:
-
-| Allowed | Blocked |
-|---------|---------|
-| HTTP/HTTPS browsing | Streaming (Netflix, Hulu, YouTube, Disney+) |
-| Email (IMAP, SMTP, POP3) | Torrenting (BitTorrent) |
-| SSH, SFTP | Gaming (UDP-based) |
-| Standard TCP protocols | VoIP/Video calls (Zoom, Teams, Discord) |
-
-### Enforcement Methods
-
-1. **Protocol blocking** - UDP largely blocked
-2. **DNS filtering** - Streaming CDNs return NXDOMAIN
-3. **Application detection** - Zenarmor identifies and blocks streaming apps
-
----
-
-## Status Dashboard
-
-Live server metrics are publicly visible:
-
-🌐 [status.oss-vpn.net](http://status.oss-vpn.net)
-
-- Real-time CPU, RAM, disk, network
-- Service status (WireGuard, Unbound, nginx)
-- Uptime statistics
-- 5-second refresh
 
 ---
 
@@ -156,9 +213,9 @@ Live server metrics are publicly visible:
 | Plan | Cost |
 |------|------|
 | Monthly | $9/month |
-| Annual | $89/year (18% discount) |
+| Annual | $89/year (save 18%) |
 
-SafeNet is available exclusively to SecureNet customers.
+SafeNet is available exclusively to Protectli vaults running SecureNet.
 
 ---
 
@@ -166,23 +223,23 @@ SafeNet is available exclusively to SecureNet customers.
 
 | Repository | Description |
 |------------|-------------|
-| [securenet](https://github.com/opensourcesecurity-inc/securenet) | OPNsense firewall configuration |
+| [securenet](https://github.com/opensourcesecurity-inc/securenet) | OPNsense firewall configuration for Protectli vaults |
 | [aiw](https://github.com/opensourcesecurity-inc/aiw) | AI Whitepaper - complete technical documentation |
-| [spl](https://github.com/opensourcesecurity-inc/spl) | Security Performance Lab data |
-| [oss-blocklist](https://github.com/opensourcesecurity-inc/oss-blocklist) | IP blocklist aggregation |
+| [spl](https://github.com/opensourcesecurity-inc/spl) | Security Performance Lab methodology and results |
+| [oss-blocklist](https://github.com/opensourcesecurity-inc/oss-blocklist) | Curated threat intelligence feeds |
 
 ---
 
 ## License
 
-This project is licensed under the [BSD 2-Clause License](LICENSE).
+BSD 2-Clause License. See [LICENSE](LICENSE).
 
 ---
 
 ## About Open Source Security
 
-Open Source Security, Inc. provides enterprise-grade home network security through professionally configured OPNsense firewalls on Protectli hardware.
+Open Source Security, Inc. provides enterprise-grade network security for home users through professionally configured OPNsense firewalls on Protectli hardware.
 
-🌐 [opensourcesecurity.net](https://opensourcesecurity.net)
+**Transparency is our foundation.** Every configuration is published. Every claim is verifiable. That's what "open source security" means.
 
-**Transparency is our foundation.** Every configuration, every test result, every claim is publicly verifiable.
+[opensourcesecurity.net](https://opensourcesecurity.net)
