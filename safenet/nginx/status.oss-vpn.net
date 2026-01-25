@@ -1,0 +1,169 @@
+# =============================================================================
+# SafeNet Customer Status Dashboard
+# =============================================================================
+# Purpose: Real-time server metrics visible to SafeNet subscribers
+# Location: /etc/nginx/sites-available/status.oss-vpn.net
+#
+# Access Control:
+# - Customer dashboard: All tunnel users (10.200.0.0/24)
+# - Full Netdata API: Admin only
+# - Admin dashboard: Admin only
+#
+# Rate Limits:
+# - Pages: 30 requests/minute
+# - API: 300 requests/minute
+#
+# This dashboard lets customers verify server health and our transparency claims.
+# =============================================================================
+
+limit_req_zone $binary_remote_addr zone=page_limit:10m rate=30r/m;
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=300r/m;
+
+server {
+    listen 80;
+    server_name status.oss-vpn.net;
+    limit_req_status 429;
+
+    # Customer status dashboard - all tunnel users
+    location / {
+        allow 10.200.0.0/24;
+        deny all;
+
+        limit_req zone=page_limit burst=50 nodelay;
+        root /var/www/status;
+        index index.html;
+        try_files $uri $uri/ =404;
+        add_header Cache-Control "public, max-age=300, must-revalidate";
+    }
+
+    location /assets/ {
+        allow 10.200.0.0/24;
+        deny all;
+
+        root /var/www/status;
+        expires 1h;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location = /favicon.ico {
+        access_log off;
+        log_not_found off;
+        return 204;
+    }
+
+    # Active vault count - all tunnel users
+    location /vpn-count.txt {
+        allow 10.200.0.0/24;
+        deny all;
+
+        alias /var/www/status/vpn-count.txt;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+
+    # SPECIFIC Netdata charts for customer dashboard ONLY
+    location ~ ^/api/v1/data\?chart=(system\.cpu|system\.ram|disk_space\.\.|system\.net|system\.uptime)(&|$) {
+        allow 10.200.0.0/24;
+        deny all;
+
+        limit_req zone=api_limit burst=100 nodelay;
+        proxy_pass http://127.0.0.1:19999;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        proxy_hide_header Cache-Control;
+        proxy_hide_header Expires;
+        proxy_hide_header Pragma;
+
+        add_header Access-Control-Allow-Origin *;
+        add_header Access-Control-Allow-Methods "GET, OPTIONS";
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+
+        proxy_no_cache 1;
+        proxy_cache_bypass 1;
+        proxy_buffering off;
+    }
+
+    # FULL Netdata API - Admin only
+    location /api/ {
+        allow 10.200.0.0/24;
+        deny all;
+
+        limit_req zone=api_limit burst=100 nodelay;
+        proxy_pass http://127.0.0.1:19999/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        proxy_hide_header Cache-Control;
+        proxy_hide_header Expires;
+        proxy_hide_header Pragma;
+
+        add_header Access-Control-Allow-Origin *;
+        add_header Access-Control-Allow-Methods "GET, OPTIONS";
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+
+        proxy_no_cache 1;
+        proxy_cache_bypass 1;
+        proxy_buffering off;
+    }
+
+    # SafeNet Admin API - Admin only
+    location /admin/api/ {
+        allow 10.200.0.0/24;
+        deny all;
+
+        proxy_pass http://127.0.0.1:5000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+
+    # Admin bandwidth dashboard - Admin only
+    location /admin/ {
+        allow 10.200.0.0/24;
+        deny all;
+
+        alias /var/www/admin/;
+        index index.html;
+        try_files $uri $uri/ =404;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+
+    # Peer stats JSON - Admin only
+    location /peer-stats.json {
+        allow 10.200.0.0/24;
+        deny all;
+
+        alias /var/www/admin/peer-stats.json;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+
+    # Full Netdata Interface - Admin only
+    location /netdata {
+        return 301 /netdata/;
+    }
+
+    location ~ /netdata/(?<ndpath>.*) {
+        allow 10.200.0.0/24;
+        deny all;
+
+        proxy_pass http://127.0.0.1:19999/$ndpath$is_args$args;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_no_cache 1;
+        proxy_cache_bypass 1;
+    }
+}

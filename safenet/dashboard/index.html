@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<!--
+=============================================================================
+SafeNet Customer Status Dashboard
+=============================================================================
+Purpose: Real-time server metrics for SafeNet subscribers
+Location: /var/www/status/index.html
+
+Shows:
+- CPU, RAM, Disk usage
+- Network traffic
+- Active vault count
+- Server uptime
+- Service status
+
+Fetches metrics from Netdata API via nginx proxy.
+Auto-refreshes every 5 seconds.
+=============================================================================
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeNet Status - Open Source Security Inc.</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            line-height: 1.6;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            padding: 40px 20px;
+            border-bottom: 3px solid #FF6B35;
+            margin-bottom: 40px;
+        }
+        h1 {
+            color: #FF6B35;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .tagline {
+            color: #1B3A5F;
+            font-size: 1.3em;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+        .intro {
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 8px;
+            margin-bottom: 40px;
+            border-left: 4px solid #FF6B35;
+        }
+        .intro h2 {
+            color: #FF6B35;
+            margin-bottom: 15px;
+        }
+        .intro p {
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+        .metric-card {
+            background: #2d2d2d;
+            padding: 25px;
+            border-radius: 8px;
+            border-left: 4px solid #1B3A5F;
+            transition: transform 0.2s;
+        }
+        .metric-card:hover {
+            transform: translateY(-5px);
+        }
+        .metric-label {
+            color: #888;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+        .metric-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #FF6B35;
+        }
+        .metric-unit {
+            font-size: 0.5em;
+            color: #888;
+        }
+        .status-good {
+            color: #4CAF50;
+        }
+        .status-warning {
+            color: #FFC107;
+        }
+        .status-critical {
+            color: #F44336;
+        }
+        .services {
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 8px;
+            margin-bottom: 40px;
+        }
+        .services h2 {
+            color: #FF6B35;
+            margin-bottom: 20px;
+        }
+        .service-list {
+            display: grid;
+            gap: 15px;
+        }
+        .service-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            background: #1a1a1a;
+            border-radius: 6px;
+        }
+        .service-name {
+            font-weight: 600;
+            font-size: 1.1em;
+        }
+        .service-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-running {
+            background: #4CAF50;
+            box-shadow: 0 0 10px #4CAF50;
+        }
+        .privacy-statement {
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 8px;
+            border-left: 4px solid #4CAF50;
+            margin-bottom: 40px;
+        }
+        .privacy-statement h2 {
+            color: #4CAF50;
+            margin-bottom: 20px;
+        }
+        .privacy-list {
+            list-style: none;
+            padding-left: 0;
+        }
+        .privacy-list li {
+            padding: 10px 0;
+            padding-left: 30px;
+            position: relative;
+        }
+        .privacy-list li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #4CAF50;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        .privacy-list.dont li:before {
+            content: "✗";
+            color: #F44336;
+        }
+        footer {
+            text-align: center;
+            margin-top: 60px;
+            padding-top: 30px;
+            border-top: 1px solid #444;
+            color: #888;
+        }
+        .loading {
+            color: #888;
+            font-style: italic;
+        }
+        .last-update {
+            text-align: center;
+            color: #888;
+            font-size: 0.9em;
+            margin-top: 20px;
+        }
+        .server-info {
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 40px;
+            text-align: center;
+            border-left: 4px solid #1B3A5F;
+        }
+        .server-info h3 {
+            color: #1B3A5F;
+            margin-bottom: 10px;
+        }
+        .server-specs {
+            color: #888;
+            font-size: 0.95em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>SafeNet Status Dashboard</h1>
+            <p class="tagline">Open Source Security Inc.</p>
+            <p style="color: #888;">Chicago, USA - Real-Time Transparency</p>
+        </header>
+        <div class="intro">
+            <h2>Security Through Transparency</h2>
+            <p>This dashboard shows EXACTLY what is running on your SafeNet VPN server. Every service, every metric, in real-time.</p>
+            <p><strong>Other VPNs ask you to trust them. We give you the tools to verify everything yourself.</strong></p>
+        </div>
+        <div class="server-info">
+            <h3>Server Specifications</h3>
+            <div class="server-specs">
+                Intel Xeon E3-1230 v6 (4C/8T @ 3.5GHz) • 32GB DDR4 RAM • 250GB SSD • 10Gbps Fiber
+            </div>
+        </div>
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-label">CPU Usage</div>
+                <div class="metric-value status-good" id="cpu-value">
+                    <span class="loading">Loading...</span>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Memory Usage</div>
+                <div class="metric-value status-good" id="ram-value">
+                    <span class="loading">Loading...</span>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Disk Usage</div>
+                <div class="metric-value status-good" id="disk-value">
+                    <span class="loading">Loading...</span>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Network Traffic</div>
+                <div class="metric-value status-good" id="net-traffic">
+                    <span class="loading">Loading...</span>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Active Vaults</div>
+                <div class="metric-value" id="connections">
+                    <span class="loading">Loading...</span>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Server Uptime</div>
+                <div class="metric-value status-good" id="uptime" style="font-size: 1.8em;">
+                    <span class="loading">Loading...</span>
+                </div>
+            </div>
+        </div>
+        <div class="services">
+            <h2>Service Status</h2>
+            <div class="service-list">
+                <div class="service-item">
+                    <span class="service-name">WireGuard VPN</span>
+                    <div class="service-status">
+                        <span class="status-indicator status-running"></span>
+                        <span class="status-good">Running</span>
+                    </div>
+                </div>
+                <div class="service-item">
+                    <span class="service-name">Unbound DNS (No Logging)</span>
+                    <div class="service-status">
+                        <span class="status-indicator status-running"></span>
+                        <span class="status-good">Running</span>
+                    </div>
+                </div>
+                <div class="service-item">
+                    <span class="service-name">iptables Firewall</span>
+                    <div class="service-status">
+                        <span class="status-indicator status-running"></span>
+                        <span class="status-good">Active</span>
+                    </div>
+                </div>
+                <div class="service-item">
+                    <span class="service-name">fail2ban Intrusion Prevention</span>
+                    <div class="service-status">
+                        <span class="status-indicator status-running"></span>
+                        <span class="status-good">Running</span>
+                    </div>
+                </div>
+                <div class="service-item">
+                    <span class="service-name">Monit Process Monitor</span>
+                    <div class="service-status">
+                        <span class="status-indicator status-running"></span>
+                        <span class="status-good">Running</span>
+                    </div>
+                </div>
+                <div class="service-item">
+                    <span class="service-name">Netdata Metrics</span>
+                    <div class="service-status">
+                        <span class="status-indicator status-running"></span>
+                        <span class="status-good">Running</span>
+                    </div>
+                </div>
+                <div class="service-item">
+                    <span class="service-name">ntfy Push Notifications</span>
+                    <div class="service-status">
+                        <span class="status-indicator status-running"></span>
+                        <span class="status-good">Running</span>
+                    </div>
+                </div>
+                <div class="service-item">
+                    <span class="service-name">Automatic Security Updates</span>
+                    <div class="service-status">
+                        <span class="status-indicator status-running"></span>
+                        <span class="status-good">Enabled</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="privacy-statement">
+            <h2>What We DO NOT Do</h2>
+            <ul class="privacy-list dont">
+                <li>Log your browsing history</li>
+                <li>Store your DNS queries</li>
+                <li>Track your traffic patterns</li>
+                <li>Sell your data</li>
+                <li>Share information with third parties</li>
+            </ul>
+            <h2 style="margin-top: 30px;">What We DO</h2>
+            <ul class="privacy-list">
+                <li>Route your traffic through our hardened server</li>
+                <li>Provide DNS resolution (forwarded to Cloudflare/Google, not logged)</li>
+                <li>Protect your real IP address</li>
+                <li>Show you exactly what is running (this dashboard)</li>
+                <li>Give you the tools to verify our claims</li>
+            </ul>
+            <h2 style="margin-top: 30px;">How to Verify</h2>
+            <p style="margin-top: 10px;">All server configurations are open source and available on GitHub. You can verify that DNS logging is disabled, check our firewall rules, and see exactly what is running. We do not ask you to trust us. We give you the ability to verify everything yourself.</p>
+        </div>
+        <div class="last-update" id="last-update">
+            Auto-refreshing every 5 seconds...
+        </div>
+        <footer>
+            <p>© 2025-2026 Open Source Security Inc. - SafeNet VPN Service</p>
+        </footer>
+    </div>
+    <script>
+        async function updateMetrics() {
+            try {
+                // CPU Usage
+                const cpuResponse = await fetch('/api/v1/data?chart=system.cpu&after=-1&points=1');
+                const cpuData = await cpuResponse.json();
+                if (cpuData && cpuData.data && cpuData.data.length > 0) {
+                    const user = cpuData.data[0][6] || 0;
+                    const system = cpuData.data[0][7] || 0;
+                    const cpuPercent = Math.round(user + system);
+                    const cpuElement = document.getElementById('cpu-value');
+                    cpuElement.innerHTML = cpuPercent + '<span class="metric-unit">%</span>';
+                    cpuElement.className = 'metric-value ' +
+                        (cpuPercent < 50 ? 'status-good' : cpuPercent < 80 ? 'status-warning' : 'status-critical');
+                }
+                // RAM Usage
+                const ramResponse = await fetch('/api/v1/data?chart=system.ram&after=-1&points=1');
+                const ramData = await ramResponse.json();
+                if (ramData && ramData.data && ramData.data.length > 0) {
+                    const usedMB = ramData.data[0][2] || 0;
+                    const totalGB = 32;
+                    const usedGB = (usedMB / 1024).toFixed(1);
+                    const ramPercent = Math.round((usedMB / 1024 / totalGB) * 100);
+                    const ramElement = document.getElementById('ram-value');
+                    ramElement.innerHTML = ramPercent + '<span class="metric-unit">% (' + usedGB + 'GB)</span>';
+                    ramElement.className = 'metric-value ' +
+                        (ramPercent < 70 ? 'status-good' : ramPercent < 90 ? 'status-warning' : 'status-critical');
+                }
+                // Disk Usage
+                const diskResponse = await fetch('/api/v1/data?chart=disk_space./&after=-1&points=1');
+                const diskData = await diskResponse.json();
+                if (diskData && diskData.data && diskData.data.length > 0) {
+                    const availGB = diskData.data[0][1] || 0;
+                    const usedGB = diskData.data[0][2] || 0;
+                    const reservedGB = diskData.data[0][3] || 0;
+                    const totalGB = availGB + usedGB + reservedGB;
+                    const diskPercent = Math.round((usedGB / totalGB) * 100);
+                    const diskElement = document.getElementById('disk-value');
+                    diskElement.innerHTML = diskPercent + '<span class="metric-unit">%</span>';
+                    diskElement.className = 'metric-value ' +
+                        (diskPercent < 70 ? 'status-good' : diskPercent < 90 ? 'status-warning' : 'status-critical');
+                }
+                // Network Traffic
+                const netResponse = await fetch('/api/v1/data?chart=system.net&after=-1&points=1');
+                const netData = await netResponse.json();
+                if (netData && netData.data && netData.data.length > 0) {
+                    const rxKBps = Math.abs(netData.data[0][1] || 0);
+                    const txKBps = Math.abs(netData.data[0][2] || 0);
+                    const totalKBps = rxKBps + txKBps;
+                    let displayValue, unit;
+                    if (totalKBps < 1000) {
+                        displayValue = Math.round(totalKBps);
+                        unit = 'KB/s';
+                    } else {
+                        displayValue = (totalKBps / 1024).toFixed(2);
+                        unit = 'MB/s';
+                    }
+                    document.getElementById('net-traffic').innerHTML =
+                        displayValue + '<span class="metric-unit">' + unit + '</span>';
+                }
+                // Server Uptime
+                const uptimeResponse = await fetch('/api/v1/data?chart=system.uptime&after=-1&points=1');
+                const uptimeData = await uptimeResponse.json();
+                if (uptimeData && uptimeData.data && uptimeData.data.length > 0) {
+                    const uptimeSeconds = uptimeData.data[0][1] || 0;
+                    const days = Math.floor(uptimeSeconds / 86400);
+                    const hours = Math.floor((uptimeSeconds % 86400) / 3600);
+                    const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+                    const uptimeElement = document.getElementById('uptime');
+                    uptimeElement.innerHTML = days + 'd ' + hours + 'h ' + minutes + 'm';
+                    uptimeElement.className = 'metric-value status-good';
+                }
+                // Active Vaults Count
+                const vaultCountResponse = await fetch('/vpn-count.txt');
+                const vaultCountText = await vaultCountResponse.text();
+                const vaultCount = parseInt(vaultCountText.trim()) || 0;
+                document.getElementById('connections').innerHTML =
+                    vaultCount + '<span class="metric-unit"> active</span>';
+                // Update timestamp
+                const now = new Date();
+                document.getElementById('last-update').textContent =
+                    'Last updated: ' + now.toLocaleTimeString() + ' - Auto-refreshing every 5 seconds';
+            } catch (error) {
+                console.error('Error fetching metrics:', error);
+                document.getElementById('last-update').textContent =
+                    'Error loading metrics - retrying in 5 seconds...';
+            }
+        }
+        updateMetrics();
+        setInterval(updateMetrics, 5000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+# =============================================================================
+# SafeNet Admin API Service
+# =============================================================================
+# Purpose: Flask/Gunicorn API for OSS engineer dashboard
+# Location: /etc/systemd/system/safenet-admin.service
+#
+# PRIVILEGE SEPARATION:
+# - Runs as unprivileged 'safenet' user (NOT root)
+# - Binds to localhost only (127.0.0.1:5000)
+# - Depends on wg-control.service for WireGuard operations
+# - Cannot directly modify WireGuard - must go through wg-control socket
+#
+# Security model: Web app compromise doesn't give access to VPN keys.
+# See AIW Part 19 for privilege separation architecture.
+# =============================================================================
+
+[Unit]
+Description=SafeNet Admin API
+After=network.target wg-control.service
+Requires=wg-control.service
+
+[Service]
+Type=simple
+User=safenet
+Group=safenet
+WorkingDirectory=/opt/safenet-admin
+Environment="PATH=/opt/safenet-admin/venv/bin"
+ExecStart=/opt/safenet-admin/venv/bin/gunicorn --bind 127.0.0.1:5000 --workers 2 app:app
+Restart=always
+RestartSec=5
+
+# Security hardening
+ProtectSystem=strict
+ReadWritePaths=/opt/safenet-admin
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

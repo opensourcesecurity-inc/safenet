@@ -1,0 +1,64 @@
+# =============================================================================
+# OSS Blocklist Distribution Server
+# =============================================================================
+# Purpose: Serve DNS and IP blocklists to customer vaults
+# Location: /etc/nginx/sites-available/oss-blocklist.net
+#
+# Endpoints:
+# - /dns/dns-combined.txt   - 850K+ blocked domains
+# - /dns/dns-whitelist.txt  - Customer exception domains
+# - /ip/ip-combined.txt     - 46K+ blocked IPs
+#
+# CORS enabled so customer vaults can fetch directly.
+# 1-hour cache to reduce load while allowing daily updates.
+# =============================================================================
+
+server {
+    listen 80;
+    server_name oss-blocklist.net;
+
+    root /var/www/oss-blocklists;
+
+    access_log /var/log/nginx/oss-blocklist-access.log;
+    error_log /var/log/nginx/oss-blocklist-error.log;
+
+    # DNS blocklists
+    location /dns/ {
+        alias /var/www/oss-blocklists/;
+
+        # CORS headers (allow vaults to fetch)
+        add_header Access-Control-Allow-Origin *;
+
+        # Cache control
+        add_header Cache-Control "public, max-age=3600";
+
+        # Only serve .txt files
+        location ~ \.txt$ {
+            default_type text/plain;
+        }
+    }
+
+    # IP blocklists
+    location /ip/ {
+        alias /var/www/oss-blocklists/;
+        add_header Access-Control-Allow-Origin *;
+        add_header Cache-Control "public, max-age=3600";
+
+        location ~ \.txt$ {
+            default_type text/plain;
+        }
+    }
+
+    # Future: Threat rules (Suricata, etc.)
+    location /threats/ {
+        alias /var/www/oss-blocklists/;
+        add_header Access-Control-Allow-Origin *;
+        add_header Cache-Control "public, max-age=3600";
+    }
+
+    # Root shows simple info
+    location = / {
+        return 200 "OSS Blocklist Server\n\nAvailable lists:\n- /dns/dns-combined.txt\n- /dns/dns-whitelist.txt\n- /ip/ip-combined.txt\n";
+        add_header Content-Type text/plain;
+    }
+}

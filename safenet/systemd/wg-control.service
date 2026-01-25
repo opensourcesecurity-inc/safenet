@@ -1,0 +1,70 @@
+# =============================================================================
+# WireGuard Control Daemon
+# =============================================================================
+# Purpose: Privileged daemon for WireGuard peer management
+# Location: /etc/systemd/system/wg-control.service
+#
+# PRIVILEGE SEPARATION ARCHITECTURE:
+# - Runs as dedicated 'wgctl' user (NOT root)
+# - Granted ONLY CAP_NET_ADMIN capability (minimum for wg commands)
+# - Communicates via Unix socket at /run/wg-control/wg-control.sock
+# - safenet-admin.service connects to socket to add/remove peers
+#
+# Why this matters:
+# - Web app (safenet-admin) runs as unprivileged user
+# - Web app cannot directly access WireGuard keys or run wg commands
+# - Even if web app is compromised, attacker cannot access VPN infrastructure
+# - wg-control only accepts specific commands via socket protocol
+#
+# Supported commands:
+# - show: Get peer statistics
+# - add-live: Add peer to running interface
+# - remove-live: Remove peer from running interface
+# - add-config: Append peer to wg0.conf
+# - remove-config: Remove peer from wg0.conf
+# - get-server-pubkey: Read server public key
+#
+# See AIW Part 19 for full security architecture.
+# =============================================================================
+
+[Unit]
+Description=WireGuard Control Daemon
+Documentation=https://github.com/opensourcesecurity-inc
+Before=safenet-admin.service
+After=network.target wg-quick@wg0.service
+
+[Service]
+Type=simple
+ExecStart=/opt/safenet-admin/venv/bin/python3 /opt/safenet-admin/wg-control.py
+Restart=always
+RestartSec=5
+
+# Run as dedicated user with minimal capabilities
+User=wgctl
+Group=wgctl
+
+# Grant only CAP_NET_ADMIN (required for wg commands)
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+
+# Create runtime directory for socket
+RuntimeDirectory=wg-control
+RuntimeDirectoryMode=0750
+
+# Security hardening
+ProtectSystem=strict
+ReadWritePaths=/etc/wireguard /run/wg-control
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target
