@@ -20,7 +20,7 @@ Other VPN providers ask you to trust their "no-log" claims. We give you the actu
 │                    SafeNet Chicago Server                        │
 │                                                                  │
 │  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐  │
-│  │ WireGuard│───▶│ iptables │───▶│   NAT    │───▶│ Internet │  │
+│  │ WireGuard│──▶│ iptables │───▶│   NAT    │──▶│ Internet │  │
 │  │  :51820  │    │ FORWARD  │    │          │    │          │  │
 │  └──────────┘    └──────────┘    └──────────┘    └──────────┘  │
 │       │              │                                          │
@@ -32,7 +32,7 @@ Other VPN providers ask you to trust their "no-log" claims. We give you the actu
 │       │                                                         │
 │       ▼                                                         │
 │  ┌──────────┐    ┌──────────┐                                  │
-│  │ Unbound  │───▶│Cloudflare│  Zero query logging              │
+│  │ Unbound  │──▶│Cloudflare│  Zero query logging              │
 │  │   DNS    │    │ + Google │  850K+ domains blocked           │
 │  └──────────┘    └──────────┘                                  │
 │                                                                  │
@@ -40,7 +40,7 @@ Other VPN providers ask you to trust their "no-log" claims. We give you the actu
 │  │              Privilege Separation                         │  │
 │  │  ┌─────────────┐         ┌─────────────┐                 │  │
 │  │  │safenet-admin│◀──sock──│ wg-control  │                 │  │
-│  │  │ (unprivileged)│        │(CAP_NET_ADMIN)│                │  │
+│  │  │(unprivileged)│        │(CAP_NET_ADMIN)│                │  │
 │  │  │  Flask API  │         │ WG commands │                 │  │
 │  │  └─────────────┘         └─────────────┘                 │  │
 │  └──────────────────────────────────────────────────────────┘  │
@@ -158,6 +158,54 @@ ps aux | grep -E "safenet|wg-control"
 # safenet-admin runs as 'safenet' user
 # wg-control runs as 'wgctl' user with CAP_NET_ADMIN only
 ```
+
+---
+
+## Server Verification
+
+SafeNet publishes a daily filesystem snapshot for independent verification.
+
+**Live Snapshot:** [http://oss-blocklist.net/tree/TREE.txt](http://oss-blocklist.net/tree/TREE.txt)
+
+Updated daily at 2:30 AM CST via automated cron job.
+
+### What the Snapshot Contains
+
+| Section | Description |
+| --- | --- |
+| File Checksums | SHA-256 hashes of all configuration files |
+| Directory Structure | Complete tree of server filesystem |
+| Service Status | Live status of all SafeNet services |
+| Blocklist Stats | Current domain and IP block counts |
+
+### How to Verify
+
+1. Download the live snapshot from the URL above
+2. Clone this repository
+3. Compare the checksums in the snapshot against the files in this repo
+```bash
+# Example: verify the Unbound DNS config
+curl -s http://oss-blocklist.net/tree/TREE.txt | grep safenet.conf
+# Compare against:
+sha256sum unbound/safenet.conf
+```
+
+### What Is Excluded
+
+| Excluded | Reason |
+| --- | --- |
+| WireGuard private key | Server identity |
+| Customer public keys | Customer privacy |
+| Customer database | Names, emails, vault serials |
+| Log files | Connection metadata |
+
+The WireGuard [Interface] section IS checksummed. Only [Peer] sections are excluded.
+
+### Live Verification
+
+Want real-time proof? Contact OSS support to arrange a screen share where we run the tree command live and you diff it yourself.
+
+**Other VPNs say "trust us." We say "verify us."**
 
 ## Related Documentation
 
